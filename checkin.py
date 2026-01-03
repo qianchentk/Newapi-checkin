@@ -17,7 +17,34 @@ from typing import Optional
 class NewAPICheckin:
     """NewAPI 签到类"""
 
-    def __init__(self, base_url: str, session_cookie: str, user_id: str = None):
+    @staticmethod
+    def _mask_url(url: str) -> str:
+        """
+        脱敏 URL，隐藏域名细节
+        例如: https://api.example.com -> https://api.***.**
+        """
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain_parts = parsed.netloc.split('.')
+            if len(domain_parts) >= 2:
+                # 保留第一部分和最后一部分，中间用 *** 代替
+                masked_domain = f"{domain_parts[0]}.***." + '.'.join(domain_parts[-1:])
+            else:
+                masked_domain = '***'
+            return f"{parsed.scheme}://{masked_domain}"
+        except Exception:
+            return 'https://***'
+
+    @staticmethod
+    def _mask_user_id(user_id: str) -> str:
+        """
+        脱敏用户ID
+        例如: 1429 -> ****
+        """
+        return '****'
+
+    def __init__(self, base_url: str, session_cookie: str, user_id: str = None, cf_clearance: str = None):
         """
         初始化签到实例
 
@@ -25,10 +52,16 @@ class NewAPICheckin:
             base_url: API 基础地址，如 https://example.com
             session_cookie: session cookie 值
             user_id: 用户ID（可选，如果不提供会尝试自动提取）
+            cf_clearance: Cloudflare clearance cookie（可选，用于绕过 CF 防护）
         """
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self.session.cookies.set('session', session_cookie)
+
+        # 如果提供了 cf_clearance，添加到 cookies
+        if cf_clearance:
+            self.session.cookies.set('cf_clearance', cf_clearance)
+
         self.session.headers.update({
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
@@ -261,6 +294,9 @@ def parse_accounts(accounts_str: str) -> list:
                     # 如果提供了 user_id，添加到账号信息中
                     if 'user_id' in item:
                         account['user_id'] = item['user_id']
+                    # 如果提供了 cf_clearance，添加到账号信息中
+                    if 'cf_clearance' in item:
+                        account['cf_clearance'] = item['cf_clearance']
                     accounts.append(account)
             return accounts
     except json.JSONDecodeError:
@@ -311,20 +347,23 @@ def main():
         url = account['url']
         session_cookie = account['session']
         user_id = account.get('user_id')  # 获取用户ID（如果提供）
+        cf_clearance = account.get('cf_clearance')  # 获取 CF clearance（如果提供）
         name = account.get('name') or f'账号{i}'
 
         print(f'[{i}/{len(accounts)}] {name}')
-        print(f'  站点: {url}')
+        print(f'  站点: {NewAPICheckin._mask_url(url)}')
         if user_id:
-            print(f'  用户ID: {user_id}')
+            print(f'  用户ID: {NewAPICheckin._mask_user_id(user_id)}')
 
-        client = NewAPICheckin(url, session_cookie, user_id)
+        client = NewAPICheckin(url, session_cookie, user_id, cf_clearance)
 
         # 获取用户信息
         user_info = client.get_user_info()
         if user_info:
             username = user_info.get('username', '未知')
-            print(f'  用户: {username}')
+            # 用户名也脱敏，只显示前3个字符
+            masked_username = username[:3] + '***' if len(username) > 3 else '***'
+            print(f'  用户: {masked_username}')
         else:
             print('  用户: 获取失败（可能 session 已过期）')
 
